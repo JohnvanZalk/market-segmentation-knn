@@ -1,41 +1,43 @@
 #!/usr/bin/Rscript
 
-#Using crontab
-#To edit or create new schedule past crontab -e in Terminal
+##Using crontab
+#To edit or create new schedule, type crontab -e in Terminal
 #Press i to enter insert mode
 #MIN HR DAY MON DOY CMD
 #Time is in UTC! (UTC is 4 hours later than EDT)
 #Insert /usr/bin/Rscript at top of script or in cron job line
 #Press CTRL+C to exit insert mode
-#Save and quit by typing :wq
+#Save and quit by holding :wq
 #Make R script executable with chmod +x /home/user/Location/Of/Script 
 
 #Load required packages
-library(tm) # tm or the text-mining package can bring the dataframe into a different format to clean up job titles 
+library(tm) # tm or the text-mining package helps reformat the dataframe to clean up job titles 
 library(SnowballC) #This package breaks down job titles to just stem words
 library(class) # class contains the nearest neighbor algorithm
-library(dplyr)
-library(RForcecom)
+library(dplyr) #data manipulation
+library(RForcecom) # Like simple_salesforce in Python, this is a data integration with Salesforce
 
-#Login to Salesforce
+#Authenticate to Salesforce
 username <- "jvanzalk@sepapower.org"
 password <- "SEPA2019WIfWAglPLQZYyyrAcQ6klSgu"
 loginURL <- "https://login.salesforce.com/"
 apiVersion <- "46.0"
 session <- rforcecom.login(username, password, loginURL, apiVersion)
 
+##Pull all leads and contacts with titles (job function prediction based on title)
+
 #Pull all contacts with job titles
 ContactQuery <- "SELECT Contact_18_Digit_ID__c,Title,	Account_Organization_Type__c, Job_Function_2__c FROM Contact WHERE Title!=''"
 AllContacts <-rforcecom.query(session, ContactQuery)
-#Create new column with lead ids to rbind
+#Create new column with lead ids to rbind leads and contacts
 AllContacts$Lead_18_Digit_ID__c <-NA
 AllContacts<-AllContacts[,c(1,5,2,3,4)]
 names(AllContacts)<-c("Contact_ID","Lead_ID", "Title", "Org_Type","Function")
-#remove rows with bad values for org type
 
 #Pull all leads with job titles that have not been converted to contacts
 LeadQuery <- "SELECT Lead_18_Digit_ID__c,Title,Org_Type__c, Job_Function_2__c FROM Lead WHERE Title!=''AND IsConverted=FALSE"
 AllLeads <-rforcecom.query(session, LeadQuery)
+#Reformat columns to match AllContacts dataframe
 AllLeads$Contact_18_Digit_ID__c <-NA
 AllLeads<-AllLeads[,c(5,1,2,3,4)]
 names(AllLeads)<-c("Contact_ID","Lead_ID", "Title", "Org_Type","Function")
@@ -43,39 +45,41 @@ names(AllLeads)<-c("Contact_ID","Lead_ID", "Title", "Org_Type","Function")
 #Combine leads and contacts
 df<-rbind(AllContacts,AllLeads)
 
-#Extract rows without organzation types to be used in seperate analysis (NOT IN USE NOW)
-missing_orgtypes<-df[is.na(df$Org_Type),]
-
+#Subset dataframe to return leads/contacts in utility or corporate organizations
+#Individuals from government, non-profit & educational organizations are not included in this analysis 
 selected<-c("Utility","Corporate")
 df2<-df[df$Org_Type %in% selected,]
 
-#Create another dataframe with contacts/leads that do not have job functions
+## Create a test and train group for the model
+
+#Create another dataframe with contacts/leads that do not have job functions (test group)
 test<-subset(df2,is.na(Function))
 #Mark blanks job functions as unassigned (must have some text in there)
 test$Function  <- "Unassigned"
 
-#Create a datafram without blank functions to use for training
+#Create a datafram without existing functions to use for training
 train<-df2[df2$Function !="",]
 
-##Initial assignment where titles contain keywords.
-#Many functions can be identifed based on keywords in titles before relying on computer prediction
+##Initial assignment where titles contain keywords
+#Many job functions can be identifed based on keywords in titles before relying on computer prediction
 
 
-##Utility
+#Utility
+#if there are indivduals from utilities wihtout job functions, proceed with functions below
 if(sum(test$Org_Type == "Utility")>0){
   
   Utility <- subset(test, test$Org_Type == "Utility")
   
-  #Transmission Planning & Operations keywords
+  #Transmission Planning & Operations job function keywords
   #^=start, $=end
   transmission <- c("transmission","wholesale markets","power marketing", "power utilization",
                     "grid integration", "siting","synchrophasor"," ISO ","market operations",
                     "congestion")
   #The computer is searching the column of job titles for the above keywords
   u1<-grepl(paste(transmission, collapse = "|"), Utility$Title, ignore.case = TRUE)
-  #If any of the keywords are found in the job titles, assign that contact/lead to Transmission
+  #If any of the keywords are found in the job titles, assign that contact/lead to the Transmission job function
   Utility$Function[u1] <- 'Transmission Planning & Operations'
-  #Create a table with newly assigned job functions and remove them from the unassigned dataframe
+  #Create a dataframe (table1) with newly assigned job functions and remove them from the unassigned dataframe
   table1<-Utility[Utility$Function=='Transmission Planning & Operations',]
   Utility<-Utility[Utility$Function=='Unassigned',]
   
@@ -187,18 +191,22 @@ if(sum(test$Org_Type == "Utility")>0){
   table11<-Utility[Utility$Function=='Unidentified',]
   Utility<-Utility[Utility$Function=='Unassigned',]
   
+  #Combine all individuals with newly assigned job functions into a single dataframe
   assigned_u<-rbind(table1,table2,table3,table4,table5,table6,table7,table8,table9,table10,table11)
   
-  #If contacts/leads remain unassigned, use knn to predict job functions
+  #Create a dataframe with unassigned indivduals
   test_u<-Utility
   
+  #If contacts/leads remain unassigned, use knn to predict job functions
   if(nrow(test_u) > 0){
     
-    #take random sample of train (train must have more  or equal to than test)
-    #max 10% difference in size of each class
-    #If number of test rows is less than 2000, make train 2000 (take 200 form each job function)
+    #Take random sample of train (train size must be greater than or equal to test)
+    #No class should be greater than 10% in size of another class
+    #If number of test rows is less than 2000, make train 2000 (take 200 from each job function)
     samplesize_u <-nrow(test_u)
     samplesize_u[samplesize_u<2000] <- 2000
+    
+    #Divide sample by 10 (10 job functions) to get the same number of samples per function
     samplesize_u = samplesize_u / 10
     samplesize_u <-round(samplesize_u)
     samplesize_u <-samplesize_u+1
@@ -211,38 +219,39 @@ if(sum(test$Org_Type == "Utility")>0){
     
     #If utility contacts/leads are assigned corporate job functions, change the functions to blank and add them to test
     if(nrow(train_u[train_u$Function %in% corporate_only_functions, ])>0){
-    error_u<-train_u[train_u$Function %in% corporate_only_functions, ]
-    error_u$Function <- NA
-    test_u<-rbind(test_u,error_u)
+      error_u<-train_u[train_u$Function %in% corporate_only_functions, ]
+      error_u$Function <- NA
+      test_u<-rbind(test_u,error_u)
     }
     
-    #Remove "Unidentified" job titles
+    #Remove "Unidentified" job titles (individuals that went through process already, but could not be assigned)
     utility_functions<-c("Transmission Planning & Operations" ,"Program Management","Generation",
                          "Leadership and Organizational Planning","Customer Service",
                          "Resource Planning","Marketing","Government & Regulatory Affairs",
                          "General Management","Distribution Planning & Operations")
     train_u<-train_u[train_u$Function %in% utility_functions,]
     
-    #calculate the number of contacts/leads per job function
+    #Calculate the number of contacts/leads per job function
     norows_u<-  train_u %>%
       group_by(Function) %>%
       summarise(no_rows = length(Function))
     
-    #take the minimum group size 
+    #Take the minimum group size 
     mingroupsize_u<-min(norows_u[,2])
     
+    #If the minumum group size is less than the required sample size, generate additional samples
     if(mingroupsize_u < samplesize_u){
       
-      #take at least that minimum number of observations from each group
+      #Take at least that minimum number of observations from each group
       train_a_u<-train_u %>% group_by(Function) %>% sample_n(mingroupsize_u)
       
-      #calculate the remainder of observations needed to meet the sample size
+      #Calculate the remainder of observations needed to meet the sample size 
       remainder_u <- (samplesize_u * 10) - nrow(train_a_u)
       
-      #take a random sample from the leftover train pile to meet the sample size
+      #Take a random sample from the leftover train pile to meet the sample size
       train_b_u <- sample_n(train_u, remainder_u)
       
-      #bind train 1 and 2 to meet the sample size
+      #Bind train 1 and 2 to meet the sample size
       train_u <-rbind.data.frame(train_a_u,train_b_u)
       
     }  
@@ -251,30 +260,32 @@ if(sum(test$Org_Type == "Utility")>0){
       train_u<-train_u %>% group_by(Function) %>% sample_n(samplesize_u)
     }
     
+    #Convert to dataframe
     train_u<-data.frame(train_u)
     test_u<-data.frame(test_u)
     
-    #We will combine the dataframes for cleaning so this count will allow us to seperate them later on
+    #Test and train dataframes are combined for cleaning so a count column will allow them to be seperated later on
     train_u$count<- rep(1,nrow(train_u))
     test_u$count<- rep(2,nrow(test_u))
     
-    #merge dfs together for cleaning
+    #Bind dfs together for cleaning
     df_u <- rbind(train_u,test_u)
     
+    #Create a Corpus (collection of text from titles)
     docs_u <- Corpus(VectorSource(df_u$Title))
     
-    docs_u <- tm_map(docs_u, content_transformer(tolower))#makes them all lowercase
-    docs_u <- tm_map(docs_u, removeNumbers)
+    docs_u <- tm_map(docs_u, content_transformer(tolower))#make all titles lowercase
+    docs_u <- tm_map(docs_u, removeNumbers) 
     docs_u <- tm_map(docs_u, removePunctuation)
-    docs_u <- tm_map(docs_u, stripWhitespace)#If there are multiple spaces between characters, they are collapsed to a single space
+    docs_u <- tm_map(docs_u, stripWhitespace)#If there are multiple spaces between characters, collapse them to a single space
     docs_u <- tm_map(docs_u, removeWords, stopwords("english"))#removes words that aren't in the english language
     docs_u <- tm_map(docs_u, stemDocument, language = "english") #stems the words e.g. "Manager" turns into "manag"
     
+    #Create a dataframe where column headers are unique words from titles and rows are counts of those words in each individuals title
     dtm_u <- DocumentTermMatrix(docs_u)
-    
     mat.df_u <- as.data.frame(data.matrix(dtm_u), stringsAsfactors = FALSE)
     
-    #Bind the Function
+    #Bind job functions to new dataframe
     mat.df_u <- cbind(mat.df_u, df_u$Function)
     colnames(mat.df_u)[ncol(mat.df_u)] <- "Function"
     
@@ -282,56 +293,59 @@ if(sum(test$Org_Type == "Utility")>0){
     mat.df_u <- cbind(mat.df_u, df_u$count)
     colnames(mat.df_u)[ncol(mat.df_u)] <- "count"
     
-    # Split data by whether they have a real job function or not
+    #Split data by whether they have a job function or not
     train_u1 <- which(mat.df_u$count == 1)
     test_u1 <- which(mat.df_u$count == 2)
     
-    #isolate the classifier
+    #Isolate the classifier (in this case job function)
     cl_u <- mat.df_u[, "Function"]
     
+    #Convert list to vector
     test_u1<-unlist(test_u1, use.names=FALSE)
     train_u1<-unlist(train_u1, use.names=FALSE)
     
-    # Create model data and remove Function and count
+    #Create model data and remove job function and count
+    #Model data is combination of both test and train data
     modeldata_u <- mat.df_u[,!colnames(mat.df_u) %in% "Function"]
     modeldata_u <- modeldata_u[,!colnames(modeldata_u) %in% "count"]
     
     #Run the model
+    #k=3 is chosen after testing
     #prob=TURE will return the % of nearest neighbors that were from the winning job Function class
     knn.pred_u <- knn(modeldata_u[train_u1, ], modeldata_u[test_u1, ], cl_u[train_u1], k=3,prob = TRUE)
     
-    # Confusion matrix displays how many contacts/leads were assigned to each class 
+    #Confusion matrix displays how many contacts/leads were assigned to each job function 
     conf.mat_u <- table("Predictions" = knn.pred_u, Actual = cl_u[test_u1])
     conf.mat_u
     
-    # Create data frame with test data and predicted category
+    #Create data frame with test data and predicted category
     df.pred_u <- cbind(knn.pred_u, modeldata_u[test_u1, ])
     
-    #return just the new job functions and attach them to the origional dataframe with IDs
+    #Return just the new job functions and attach them to the origional dataframe with IDs
     df.pred_u <- df.pred_u[ c(1) ]
     final_u <- cbind(test_u,df.pred_u)
     #Attach the probabilities
     prob_u<-data.frame(attr(knn.pred_u,"prob"))
     final_u <- cbind(final_u, prob_u)
     
-    #Remove columns
+    #Remove unecessary columns
     final_u <- final_u[ -c(4,5,6) ]
     
     #Rename probability column
     colnames(final_u)[5] <- "knn.prob_u"
     
-    #Mark contacts/leads with less than 50% majority as "Unidentified"
+    #Mark contacts/leads with less than 50% majority as "Unidentified" (all three neighbors had different fuctions)
     final_u$knn.pred_u <- as.character(final_u$knn.pred_u)
     final_u$knn.pred_u[final_u$knn.prob_u < .50] <- "Unidentified"
     
     #Remove probability
     final_u <- final_u[ -c(5) ]
     
-    #Rename columns to match assigned
+    #Rename columns to match the dataframe assigned_u
     names(final_u)<-c("Contact_ID","Lead_ID","Title", "Function")
     assigned_u <- assigned_u[-c(4)]
     
-    #Combine functions identified in intial cleanse with those identified from the machine learning
+    #Combine functions identified in intial cleanse with those identified from knn
     final_u <-rbind(final_u,assigned_u)
     
   }
@@ -347,7 +361,8 @@ if(sum(test$Org_Type == "Utility")>0){
   final_u<- final_u[-c(3)]
 }
 
-##Corporate
+##Repeat steps for individuals at corporate organzations
+
 if(sum(test$Org_Type == "Corporate")>0){
   
   Corporate <- subset(test, test$Org_Type == "Corporate")
@@ -595,12 +610,12 @@ if(sum(test$Org_Type == "Corporate")>0){
   final_c<- final_c[-c(3)]
 }
 
-#Merge corporate and utility 
-if(sum(test$Org_Type == "Corporate")==0 & sum(test$Org_Type == "Utility")>0){final <- final_u}
+# Merge individuals from corporate and utility organizations
+if(sum(test$Org_Type == "Corporate")==0 & sum(test$Org_Type == "Utility")>0){final <- final_u}#if there are no corp individuals, final dataframe consists only of ind. from utilties
 if(sum(test$Org_Type == "Corporate")>0 & sum(test$Org_Type == "Utility")==0){final <- final_c}
 if(sum(test$Org_Type == "Corporate")>0 & sum(test$Org_Type == "Utility")>0){final <- rbind(final_u,final_c)}
 
-#If contacts/leads at GNE orgs have functions, remove them and bind to final to be updated in Salesforce
+#If contacts/leads at Government, Non-Profit & Education orgs have functions, remove them and bind to final to be updated in Salesforce
 if(nrow(df[df$Org_Type=="Government, Non-Profit & Education" && df$Function!="", ])>0){
   GNE<-df[df$Org_Type=="Government, Non-Profit & Education" && df$Function!="", ]
   GNE<-GNE[-c(3,4)]
@@ -608,8 +623,7 @@ if(nrow(df[df$Org_Type=="Government, Non-Profit & Education" && df$Function!="",
   final <- rbind(final,GNE)
 }
 
-
-#seperate final into leads and contacts
+#Seperate final into leads and contacts
 Contacts<- final[!is.na(final$Contact_ID), ]
 Contacts <- Contacts[ -c(2) ]
 names(Contacts)<-c("Id", "Job_Function_2__c")
