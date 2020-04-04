@@ -18,10 +18,6 @@ library(dplyr) #data manipulation
 library(RForcecom) # Like simple_salesforce in Python, this is a data integration with Salesforce
 
 #Authenticate to Salesforce
-username <- "jvanzalk@sepapower.org"
-password <- "SEPA2019WIfWAglPLQZYyyrAcQ6klSgu"
-loginURL <- "https://login.salesforce.com/"
-apiVersion <- "46.0"
 session <- rforcecom.login(username, password, loginURL, apiVersion)
 
 ##Pull all leads and contacts with titles (job function prediction based on title)
