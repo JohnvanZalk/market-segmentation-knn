@@ -17,12 +17,10 @@ library(class) # class contains the nearest neighbor algorithm
 library(dplyr) #data manipulation
 library(RForcecom) # Like simple_salesforce in Python, this is a data integration with Salesforce
 
+#Grab Salesforce credentials
+call_service(sf_username, sf_password, sf_loginURL, sf_apiVersion)
 #Authenticate to Salesforce
-username <- "jvanzalk@sepapower.org"
-password <- "SEPA2019WIfWAglPLQZYyyrAcQ6klSgu"
-loginURL <- "https://login.salesforce.com/"
-apiVersion <- "46.0"
-session <- rforcecom.login(username, password, loginURL, apiVersion)
+session <- rforcecom.login(sf_username, sf_password, sf_loginURL, sf_apiVersion)
 
 ##Pull all leads and contacts with titles (job function prediction based on title)
 
