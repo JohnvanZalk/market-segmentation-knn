@@ -19,6 +19,6 @@ The R script in this repository performs a simple ETL process, pulling customers
 
 The prediction is done using the k-Nearest Neighbor method where one customer's job function is populated with the most common value from its nearest neighbors (i.e. the customers with the most similar job titles).
 
-<img src= "https://github.com/JohnvanZalk/market-segmentation-knn/blob/master/knn.JPG" width="500">
+<img src= "https://github.com/JohnvanZalk/market-segmentation-knn/blob/master/images/knn.JPG" width="500">
 
 In the example above, the yellow customer would be assigned the same job function as the blue customers (assuming k=3).
