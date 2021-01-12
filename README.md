@@ -8,16 +8,13 @@ This project provides an example of how one segmentation field, job function, ca
 
 Job functions help pool together people with similar responsibilities. Here are a few examples:
 
-* Information Technology
-* Legal
-* Media & Communications
-* Program & Product Management
-* Research
-* Sales
+* Engineering
+* Product Developement
+* Business Development
 
-The R script in this repository performs a simple ETL process, pulling customers from Salesforce, predicting their job function, and loading them back to Salesforce.
+The R script in this repository predicts a customer's job function using k-Nearest Neighbors (KNN).
 
-The prediction is done using the k-Nearest Neighbor method where one customer's job function is populated with the most common value from its nearest neighbors (i.e. the customers with the most similar job titles).
+With the KNN method, a customer's job function is populated with the most common value from its nearest neighbors (i.e. the customers with the most similar job titles).
 
 <img src= "https://github.com/JohnvanZalk/market-segmentation-knn/blob/master/images/knn.JPG" width="500">
 
